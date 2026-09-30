@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Leo Overlay</title>
+    <style>
+      body { width: 300px; margin: 0; padding: 16px; color: #17211d; background: #f7faf8; font: 14px/1.45 system-ui, sans-serif; }
+      h1 { margin: 0 0 8px; font-size: 18px; }
+      p { margin: 8px 0; color: #53635b; }
+      input, button { box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid #bdc9c2; border-radius: 8px; font: inherit; }
+      button { margin-top: 8px; color: white; background: #176b52; border: 0; cursor: pointer; }
+      button.secondary { color: #26352f; background: #e5eee9; }
+      #status { min-height: 20px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Leo Draft Overlay</h1>
+    <p>Start the local assistant service, enter its one-time pairing code, then open WhatsApp Web.</p>
+    <input id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="Pairing code">
+    <button id="pair">Pair local service</button>
+    <button id="unpair" class="secondary">Unpair this extension</button>
+    <p id="status" role="status"></p>
+    <script src="popup.js"></script>
+  </body>
+</html>

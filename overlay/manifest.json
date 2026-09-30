@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Leo WhatsApp Draft Overlay",
+  "version": "0.1.0",
+  "description": "Draft and insert replies in the currently open, user-selected WhatsApp chat.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1:8765/*"],
+  "background": {
+    "service_worker": "service_worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Leo WhatsApp draft overlay",
+    "default_popup": "popup.html"
+  }
+}
