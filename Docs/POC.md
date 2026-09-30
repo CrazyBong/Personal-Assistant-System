@@ -1,767 +1,234 @@
-# Personal AI Assistant System — POC
+# Personal Assistant System — POC
 
-## 1. Overview
+## 1. Goal
 
-A lightweight, private personal AI assistant system designed initially to interact with **WhatsApp**.
+Build a small local assistant that reads eligible unread WhatsApp text messages, drafts a reply, and waits for the user to approve it before sending.
 
-The system has one central AI assistant and supports multiple **personas** that determine how the assistant communicates.
+The system has one assistant. Personas such as **Leo** and **Maximus** are behavior settings for that assistant, not separate agents, models, or memory stores.
 
-Example personas:
+## 2. POC boundaries
 
-* **Leo** — general-purpose, Jarvis-style personal assistant
-* **Maximus** — medieval-style personal butler
+### In scope
 
-The personas are **not separate agents or systems**. They are behavioral configurations used by the same underlying assistant.
+- WhatsApp text messages only
+- Read unread one-to-one conversations
+- Identify the sender and load any saved relationship notes
+- Use a short recent conversation history while the process is running
+- Generate a suggested reply with Ollama
+- Let the user edit, approve, reject, or defer a suggestion
+- Send only after an explicit user approval
+- Support switching personas
+- Store small user, contact, and settings files locally
 
----
+### Out of scope
 
-# 2. POC Scope
+- Groups, images, voice messages, calls, email, calendar, browser, or computer control
+- Automatic sending or autonomous actions
+- Long-term conversation memory, a database, vector search, RAG, or multi-agent workflows
+- Docker, cloud hosting, or multiple services
 
-The first version is **WhatsApp text only**.
+## 3. Recommended architecture
 
-### The system can
-
-* Detect unread WhatsApp messages
-* Read unread **person-to-person** messages
-* Identify the sender
-* Understand the current conversation
-* Use basic information about the user
-* Use information about the relationship with the sender
-* Generate an appropriate response
-* Present the response for user approval
-* Send the approved response
-* Maintain temporary conversation context while running
-* Switch between personas
-
-### The system should ignore
-
-* WhatsApp Business accounts
-* Company accounts
-* Brand accounts
-* Sponsored messages
-* Advertisements
-* Marketing messages
-* Promotional messages
-* Obvious spam
-* Automated/bot accounts
-* Company/customer-service conversations
-* Broadcast/promotional content
-
-### Not in POC
-
-* Image processing
-* Voice messages
-* Calls
-* Email
-* Calendar
-* Browser control
-* Computer control
-* Autonomous internet research
-* Automatic message sending without approval
-
----
-
-# 3. Core Architecture
+Start with one local Python process and clear responsibilities. Keep components in one application; split modules only when implementation needs make that useful.
 
 ```text
-                         WhatsApp
-                            │
-                            ↓
-                  ┌──────────────────┐
-                  │ WhatsApp Adapter │
-                  └────────┬─────────┘
-                           ↓
-                  ┌──────────────────┐
-                  │ Unread Message   │
-                  │    Filter        │
-                  └────────┬─────────┘
-                           │
-                    Person-to-Person?
-                     /             \
-                   NO               YES
-                   │                 │
-                 IGNORE              ↓
-                              ┌──────────────┐
-                              │ AI Assistant │
-                              │     Core     │
-                              └──────┬───────┘
-                                     │
-                        ┌────────────┼────────────┐
-                        ↓            ↓            ↓
-                  User Context  Relationship  Conversation
-                                  Context       Memory
-                        │            │            │
-                        └────────────┼────────────┘
-                                     ↓
-                              ┌─────────────┐
-                              │   Persona   │
-                              │             │
-                              │ Leo /       │
-                              │ Maximus     │
-                              └──────┬──────┘
-                                     ↓
-                              ┌─────────────┐
-                              │     LLM     │
-                              │   Ollama    │
-                              └──────┬──────┘
-                                     ↓
-                              Suggested Reply
-                                     ↓
-                              ┌─────────────┐
-                              │    User     │
-                              │   Approval  │
-                              └──────┬──────┘
-                                     ↓
-                                  WhatsApp
-```
-
----
-
-# 4. Unread Message Processing
-
-Leo should **not continuously process every message**.
-
-The initial workflow is:
-
-```text
-System starts
-     ↓
-Check WhatsApp
-     ↓
-Find unread messages
-     ↓
-Filter messages
-     ↓
-Process eligible conversations
-```
-
-Only messages that are currently unread should enter the AI pipeline.
-
-### Example
-
-```text
-Rahul          → 2 unread       → PROCESS
-Rohan          → 1 unread       → PROCESS
-Company X      → 3 unread       → IGNORE
-Marketing      → 1 unread       → IGNORE
-Unknown spam   → 2 unread       → IGNORE
-```
-
-The goal is to prevent Leo from unnecessarily processing the user's entire WhatsApp history.
-
----
-
-# 5. Message Eligibility Filter
-
-Before sending anything to the LLM, every unread conversation passes through a filter.
-
-```text
-Unread message
-      ↓
-Is it person-to-person?
-      │
-   ┌──┴──┐
-   NO    YES
-   │      │
- IGNORE   ↓
-      Is it business/advertising/spam?
-            │
-         ┌──┴──┐
-        YES    NO
-         │      │
-       IGNORE   ↓
-            PROCESS
-```
-
-### Ignore
-
-* Business accounts
-* Companies
-* Brands
-* Customer-support accounts
-* Sponsored messages
-* Advertisements
-* Promotional messages
-* Marketing campaigns
-* Automated notifications
-* Obvious spam
-* Bots
-
-### Process
-
-Normal **person-to-person conversations** such as:
-
-* Friends
-* Family
-* Classmates
-* Colleagues
-* Recruiters communicating personally
-* Acquaintances
-* Other individual contacts
-
-The system should prefer **conservative filtering**.
-
-If Leo cannot confidently determine whether a conversation is a legitimate person-to-person conversation, it should **not automatically respond**.
-
----
-
-# 6. Important Distinction
-
-The system should separate:
-
-```text
-MESSAGE ELIGIBILITY
+WhatsApp connector
         ↓
-Should Leo process this?
-```
-
-from:
-
-```text
-RESPONSE GENERATION
+Message processing + duplicate prevention
         ↓
-What should Leo say?
+Eligibility check ── uncertain → approval inbox as review-only
+        ↓
+Context builder (profile + contact notes + recent messages)
+        ↓
+Ollama reply generator (selected persona)
+        ↓
+Approval inbox: edit / send / reject / defer
+        ↓
+WhatsApp connector sends only on explicit approval
 ```
 
-The LLM should ideally receive only messages that have already passed the basic eligibility filter.
+The application has five responsibilities:
 
-This reduces unnecessary processing and makes Leo's behavior more predictable.
+1. **WhatsApp connector** — read eligible messages and send approved replies.
+2. **Message processing** — track message IDs and states so polling or restarting does not create duplicate drafts or sends.
+3. **Context builder** — combine user profile, contact notes, persona settings, and a small recent message window.
+4. **Reply generator** — call Ollama and return a draft. It must not send messages.
+5. **Approval inbox** — show the incoming message and draft; support edit, send, reject, and defer.
 
----
+Use a small local web UI only if a proper inbox is needed. For the earliest end-to-end prototype, a simple command-line approval flow is enough. Pick one interface and avoid maintaining both.
 
-# 7. Personal Context
+## 4. Message safety and eligibility
 
-Leo should have structured information about the user.
+Eligibility and reply generation are separate steps. Filtering decides whether a message may be considered for a draft; it never grants permission to send.
 
-Example:
+### Direct-message-only boundary
 
-```json
-{
-  "name": "Shubhranshu",
-  "preferences": [],
-  "communication_style": [],
-  "general_context": []
-}
-```
+Leo must have **no group-chat access**. This is a connector requirement, not merely an LLM prompt or a preference in settings.
 
-This information is loaded when the system starts.
+- The WhatsApp connector must expose only one-to-one conversations to the assistant. It must not subscribe to, enumerate, fetch, or pass group messages, group history, group names, or group participant lists into assistant processing.
+- Every message must carry a trusted chat type from the connector. Processing fails closed unless that type is exactly `individual`; missing, unknown, or group types are rejected before context files are loaded or Ollama is called.
+- Do not infer one-to-one status from a display name or message content. If the chosen connector cannot reliably distinguish direct chats from groups before exposing message content, it does not meet the POC requirement and must not be connected.
+- The approval inbox must not offer a way to override the group exclusion.
 
-It is **persistent configuration**, not AI memory.
+- Start with deterministic checks where possible: one-to-one chat, supported text message, not already processed, and not explicitly excluded.
+- Known business or automated accounts can be excluded using available connector metadata and user-maintained settings.
+- Do not claim perfect business, spam, or person classification. If eligibility is uncertain, mark the item **review-only** or skip it; do not silently treat uncertainty as approval.
+- The assistant may read and draft, but sending always requires a deliberate user action.
+- Keep a visible state for each item: `new`, `ignored`, `drafted`, `approved`, `sent`, `rejected`, or `deferred`.
 
----
+## 5. Data and memory
 
-# 8. Relationships
+No database is needed for the POC.
 
-Leo should understand that different people have different relationships with the user.
-
-Example:
-
-```text
-Shubhranshu
-│
-├── Family
-├── Friends
-├── College
-├── Professional
-└── Other
-```
-
-Each person can have:
-
-```text
-Name
-Relationship
-Trust level
-Communication style
-General context
-Relevant boundaries
-```
-
-Example:
-
-```json
-{
-  "Rahul": {
-    "relationship": "college friend",
-    "trust_level": "high",
-    "communication_style": "casual",
-    "context": []
-  }
-}
-```
-
-This allows the same assistant to communicate differently with different people.
-
----
-
-# 9. Memory Model
-
-The POC deliberately uses **no database**.
-
-## Temporary Memory
-
-Stored only in RAM while the system is running.
-
-```python
-conversation_memory = {}
-current_context = {}
-session_memory = {}
-```
-
-Temporary memory includes:
-
-* Recent messages
-* Current conversation
-* Current topic
-* Information learned during the session
-* Current reasoning context
-
-When the system shuts down:
-
-```text
-System stops
-     ↓
-Process terminates
-     ↓
-RAM memory disappears
-```
-
-The next startup begins with fresh temporary memory.
-
----
-
-# 10. Persistent Information
-
-Only intentionally saved information survives a restart.
-
-Use simple JSON files:
+Persistent, user-controlled configuration can live in JSON:
 
 ```text
 data/
-├── profile.json
-├── people.json
-└── settings.json
+  profile.json
+  people.json
+  settings.json
 ```
 
-There is **no database** in the POC.
+- `profile.json`: user preferences and general context.
+- `people.json`: contact relationship, communication style, relevant context, and exclusions.
+- `settings.json`: selected persona and processing preferences.
 
-### `profile.json`
+Keep recent conversation context and transient model state in RAM. Persist only what is needed to avoid duplicate processing and to retain pending approvals across a restart. Keep this state small and simple; use a JSON state file initially if needed. Revisit a database only when real usage shows JSON is inadequate.
 
-General information about the user.
+## 6. Personas
 
-### `people.json`
+Personas are small configuration files or settings that affect tone and style. They share the same context, connector, assistant logic, and model.
 
-Basic relationship information about people the user chooses to define.
+- **Leo:** calm, practical, concise, natural.
+- **Maximus:** formal, respectful, slightly theatrical, still clear and useful.
 
-### `settings.json`
+Persona choice must not change message eligibility or approval requirements.
 
-System preferences such as:
+## 7. Minimal technology choices
+
+| Concern | POC choice |
+| --- | --- |
+| Runtime | One local Python application |
+| Model runtime | Ollama with one selected local model |
+| WhatsApp | A connector behind a small interface; validate feasibility before building around it |
+| Configuration | JSON files |
+| Recent context | In-memory structures |
+| Processing state | Minimal local JSON state if restart-safe tracking requires it |
+| Approval UI | CLI for the first end-to-end slice; local web UI only when justified |
+| Database / vector DB | None |
+| Deployment | Run locally; no Docker initially |
+
+The WhatsApp connector is the largest technical uncertainty. Confirm that it can reliably read the required messages and send an approved reply in the intended local setup before investing in the rest of the application.
+
+## 8. Phase-by-phase execution plan
+
+Work through these phases in order. Each phase should leave a runnable, reviewable result before moving on.
+
+### Phase 0 — Validate the WhatsApp connector
+
+**Build:** a throwaway or minimal connector spike that can inspect unread one-to-one text messages and send a test message only after a direct user action.
+
+**Done when:**
+
+- The chosen connector works in the intended local environment.
+- The project understands its limitations, setup, and session behavior.
+- A message can be identified consistently enough to prevent repeat processing.
+- The user explicitly approves a test send.
+
+**Decision:** if the connector cannot support this reliably, choose a different integration approach before building the assistant around it.
+
+### Phase 1 — Create the smallest runnable application
+
+**Build:** one Python entry point, configuration loading, a basic Ollama call, and a command-line conversation loop using a manually supplied message.
+
+**Done when:**
+
+- The app starts locally and reports configuration/model errors clearly.
+- A manually supplied message produces a draft from Ollama.
+- The draft is displayed and is never sent by this phase.
+
+### Phase 2 — Add context and personas
+
+**Build:** `profile.json`, `people.json`, `settings.json`, a small recent-message window in RAM, and Leo/Maximus style settings.
+
+**Done when:**
+
+- The assistant loads the files and handles missing optional files safely.
+- A known contact's relationship notes and recent messages affect the draft.
+- Switching persona changes style without changing the underlying assistant behavior.
+- No conversation history is silently persisted as long-term memory.
+
+### Phase 3 — Read and track WhatsApp messages
+
+**Build:** connect the validated adapter to the application; expose only unread one-to-one text messages; apply conservative eligibility rules; track message IDs and processing state.
+
+**Done when:**
+
+- Only supported eligible messages become draft candidates.
+- Group chats and group messages are never exposed to assistant processing, including context building and Ollama.
+- Excluded or uncertain messages are skipped or marked review-only.
+- Repeated polling and application restart do not create duplicate drafts for the same message.
+- The user can see why a message was skipped or held for review.
+
+### Phase 4 — Draft replies into an approval inbox
+
+**Build:** generate a response for each eligible message and present the message, sender, relevant context, persona, and draft together. Use a CLI inbox first unless a local web UI is now clearly needed.
+
+**Done when:**
+
+- The user can inspect, edit, reject, or defer a draft.
+- Deferred and pending drafts remain understandable after a restart.
+- Model failures leave the original message available for retry and do not send anything.
+
+### Phase 5 — Send only approved replies
+
+**Build:** connect the explicit approval action to the adapter's send operation; update state after successful send and handle failures without duplicate sends.
+
+**Done when:**
+
+- No code path sends a generated draft without an explicit approval action.
+- Editing the draft sends the edited text.
+- Successful sends are recorded; failed sends remain visible and retryable.
+- Repeating an approval action cannot accidentally send the same reply twice.
+
+### Phase 6 — Improve the interface and reliability from use
+
+**Build only what actual use requires:** for example, a small local web approval inbox, clearer status/logging, or better contact management.
+
+**Done when:**
+
+- The interface makes pending, review-only, sent, rejected, and failed items clear.
+- Common connector and model failures can be diagnosed without digging through internals.
+- Any added persistence or infrastructure solves an observed limitation.
+
+Maximus can be added as a persona during Phase 2 or later. It is not a separate milestone that requires its own memory, model, or agent.
+
+## 9. First complete user flow
 
 ```text
-Selected persona
-Approval mode
-Processing preferences
+Unread WhatsApp text
+        ↓
+Check identity, eligibility, and duplicate state
+        ↓
+Build context and apply selected persona
+        ↓
+Generate a draft with Ollama
+        ↓
+Show draft to user
+        ↓
+User edits and explicitly approves
+        ↓
+Send through WhatsApp connector and record result
 ```
 
----
-
-# 11. Personas
-
-Personas define **how the assistant behaves and communicates**.
-
-They do not have separate memories or separate AI models.
-
-## Leo
-
-```text
-Name: Leo
-
-Role:
-General-purpose personal assistant
-
-Style:
-Calm
-Practical
-Professional
-Natural
-
-Behavior:
-- Helpful
-- Context-aware
-- Concise
-- Adapts communication to the recipient
-```
-
-## Maximus
-
-```text
-Name: Maximus
-
-Role:
-Medieval personal butler
-
-Style:
-Formal
-Loyal
-Respectful
-Composed
-Slightly theatrical
-
-Behavior:
-- Addresses the user respectfully
-- Uses medieval-inspired language
-- Remains understandable
-- Prioritizes practical assistance
-```
-
-Both use the same:
-
-```text
-AI Core
-User Context
-Relationship Context
-Temporary Memory
-WhatsApp Adapter
-LLM
-```
-
-Only the persona changes.
-
----
-
-# 12. Message Processing Pipeline
-
-For an eligible unread message:
-
-```text
-Unread Message
-      ↓
-Identify Sender
-      ↓
-Verify Person-to-Person
-      ↓
-Load Relationship
-      ↓
-Load User Context
-      ↓
-Load Recent Conversation
-      ↓
-Retrieve Temporary Memory
-      ↓
-Apply Selected Persona
-      ↓
-Send Context to LLM
-      ↓
-Generate Suggested Response
-      ↓
-Show to User
-```
-
-Example:
-
-```text
-Rahul:
-"Bro are you coming tomorrow?"
-```
-
-Leo sees:
-
-```text
-Sender:
-Rahul
-
-Relationship:
-College friend
-
-Communication:
-Casual
-
-Recent context:
-Discussing tomorrow's event
-
-Message:
-"Bro are you coming tomorrow?"
-```
-
-Possible response:
-
-```text
-"Yeah bro, I'll be there tomorrow."
-```
-
----
-
-# 13. Approval System
-
-The POC should use **approval-first behavior**.
-
-Leo generates the response but does not automatically send it.
-
-```text
-┌──────────────────────────────────┐
-│ Suggested response               │
-│                                  │
-│ Yeah bro, I'll be there tomorrow.│
-│                                  │
-│ [ SEND ] [ EDIT ] [ REJECT ]     │
-└──────────────────────────────────┘
-```
-
-### Automatically allowed
-
-* Read eligible unread messages
-* Analyze conversations
-* Use context
-* Generate responses
-* Maintain temporary memory
-
-### Requires approval
-
-* Sending a WhatsApp message
-
-No autonomous sending in V1.
-
----
-
-# 14. Technology Stack
-
-Keep the stack minimal.
-
-| Component            | Technology              |
-| -------------------- | ----------------------- |
-| Programming language | **Python**              |
-| AI runtime           | **Ollama**              |
-| LLM                  | Local model             |
-| WhatsApp integration | **WhatsApp Adapter**    |
-| Temporary memory     | **Python RAM objects**  |
-| Persistent data      | **JSON files**          |
-| UI                   | **Simple React + Vite** |
-| Database             | **None**                |
-| Vector database      | **None**                |
-| RAG                  | **None**                |
-| Docker               | **None initially**      |
-
-The system should run locally on one machine.
-
----
-
-# 15. Project Structure
-
-```text
-assistant-system/
-│
-├── main.py
-│
-├── core/
-│   ├── agent.py
-│   ├── context.py
-│   ├── memory.py
-│   ├── message_filter.py
-│   └── permissions.py
-│
-├── personas/
-│   ├── leo.json
-│   └── maximus.json
-│
-├── whatsapp/
-│   └── adapter.py
-│
-├── llm/
-│   └── ollama.py
-│
-├── data/
-│   ├── profile.json
-│   ├── people.json
-│   └── settings.json
-│
-└── ui/
-    └── ...
-```
-
----
-
-# 16. Runtime Flow
-
-```text
-                    SYSTEM START
-                         │
-                         ↓
-                  Load JSON data
-                         │
-                         ↓
-                Initialize RAM memory
-                         │
-                         ↓
-                Connect to WhatsApp
-                         │
-                         ↓
-                 Check unread messages
-                         │
-                         ↓
-                  Message filter
-                         │
-             ┌───────────┴───────────┐
-             ↓                       ↓
-        Not eligible              Eligible
-             │                       │
-           Ignore                    ↓
-                              Identify sender
-                                     ↓
-                              Load relationship
-                                     ↓
-                              Build context
-                                     ↓
-                              Select persona
-                                     ↓
-                                Call LLM
-                                     ↓
-                              Generate reply
-                                     ↓
-                              User approval
-                                     ↓
-                                Send reply
-                                     ↓
-                              Update RAM
-```
-
----
-
-# 17. Development Phases
-
-## Phase 1 — Basic Assistant
-
-* [ ] Python application
-* [ ] Ollama integration
-* [ ] Basic conversation
-* [ ] Leo persona
-* [ ] Temporary RAM memory
-
-## Phase 2 — Personal Context
-
-* [ ] `profile.json`
-* [ ] `people.json`
-* [ ] Relationship context
-* [ ] Persona configuration
-
-## Phase 3 — WhatsApp Reading
-
-* [ ] WhatsApp adapter
-* [ ] Detect unread messages
-* [ ] Read eligible text messages
-* [ ] Identify sender
-* [ ] Apply message filter
-
-## Phase 4 — Response Generation
-
-* [ ] Retrieve conversation context
-* [ ] Apply relationship context
-* [ ] Apply selected persona
-* [ ] Generate suggested response
-
-## Phase 5 — Approval
-
-* [ ] Suggested response UI
-* [ ] Edit response
-* [ ] Send approved response
-* [ ] Reject response
-
-## Phase 6 — Maximus
-
-* [ ] Add Maximus persona
-* [ ] Persona switching
-* [ ] Shared user context
-* [ ] Shared temporary memory
-
----
-
-# 18. Definition of Done
-
-The POC is complete when:
-
-```text
-Person sends WhatsApp message
-             ↓
-Message is unread
-             ↓
-System detects it
-             ↓
-System checks message type
-             ↓
-Business / spam / advertisement?
-        │              │
-       YES             NO
-        │              │
-      IGNORE           ↓
-                 Person-to-person
-                       ↓
-                Identify person
-                       ↓
-                Load relationship
-                       ↓
-                Load conversation
-                       ↓
-                 Apply persona
-                       ↓
-                  Ask LLM
-                       ↓
-               Generate response
-                       ↓
-                 User reviews
-                       ↓
-                User clicks SEND
-                       ↓
-                WhatsApp sends it
-```
-
----
-
-# 19. Future Expansion
-
-Once WhatsApp text works reliably, capabilities can be added one at a time:
-
-```text
-Current
-   │
-   └── WhatsApp Text
-          │
-          ├── Images
-          ├── Voice
-          └── Documents
-```
-
-Later:
-
-```text
-Assistant Core
-      │
-      ├── WhatsApp
-      ├── Calendar
-      ├── Email
-      ├── Files
-      └── Browser
-```
-
-These are **future tools**, not part of the initial POC.
-
----
-
-# Core Design Principles
-
-1. **WhatsApp only for V1.**
-2. **Only process unread messages.**
-3. **Only process person-to-person conversations.**
-4. **Ignore businesses, companies, advertisements, promotions, and obvious spam.**
-5. **When classification is uncertain, do not automatically respond.**
-6. **Temporary memory lives only in RAM.**
-7. **Only basic user/relationship information is persisted in JSON.**
-8. **Leo and Maximus are personas, not separate agents.**
-9. **The user approves messages before they are sent.**
-10. **No unnecessary infrastructure.**
-
-### V1 Stack
-
-**Python + Ollama + WhatsApp Adapter + JSON + RAM + simple React UI.**
-
-The target is a small local system with one clean loop:
-
-**Unread WhatsApp → Filter → Context → Persona → LLM → User Approval → WhatsApp**
+## 10. Design rules
+
+1. One assistant and one local application for the POC.
+2. Validate the WhatsApp integration before building dependent features.
+3. Keep message IDs and processing states to prevent duplicates.
+4. Treat uncertain eligibility as review-only or skip it.
+5. Keep eligibility, drafting, approval, and sending as separate responsibilities.
+6. Require explicit approval for every send.
+7. Use JSON and RAM until real usage demonstrates a need for more infrastructure.
+8. Personas affect style only.
+9. Add features in the phase plan; do not build future channels into V1.
